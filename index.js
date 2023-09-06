@@ -5,18 +5,24 @@ const readline = require('readline').createInterface({
 
 const { BigNumber } = require("bignumber.js");
 const { LIT } = require('./app/constants');
-const { getPricePerFullShare, getGaugeData, getGaugeControllerData } = require('./app/functions');
+const { getPricePerFullShare, getGaugeData, getGaugeControllerData, getReserves } = require('./app/functions');
 const { fetchPrices } = require('./app/price');
-const { subgraphQuery } = require('./app/subgraph');
+const { subgraphQuery, blockSubgraphQuery } = require('./app/subgraph');
 
-function calculateAPR(bunniToken_address) {
-  subgraphQuery(bunniToken_address).then(async (result) => {
+async function calculateAPR(bunniToken_address) {
+  /// fetch the block number from 24h ago
+  const timestamp_24h_ago = Math.floor(Date.now() / 1e3 - 86400);
+  const block_24h_ago = (await blockSubgraphQuery(timestamp_24h_ago)).blocks[0].number;
+
+  subgraphQuery(bunniToken_address, block_24h_ago).then(async (result) => {
     if (result.bunniTokens.length == 0) {
       console.log('~~~~~ No Bunni Token Found ~~~~~');
       return;
     }
 
+    const protocol = result.bunni;
     const bunniToken = result.bunniTokens[0];
+    const block = result.block[0];
 
     /// fetch the BunniKey
     const bunniKey = {
@@ -35,6 +41,22 @@ function calculateAPR(bunniToken_address) {
     const [amount0, amount1] = await getPricePerFullShare(bunniKey);
     const bunniTokenPriceUSD = amount0.div(Math.pow(10, bunniToken.pool.token0.decimals)).times(token0PriceUSD)
       .plus(amount1.div(Math.pow(10, bunniToken.pool.token1.decimals)).times(token1PriceUSD));
+
+    /// calculate the BunniToken reserve (TVL) in USD
+    const [reserve0, reserve1] = await getReserves(bunniKey);
+    const reserve = reserve0.div(Math.pow(10, bunniToken.pool.token0.decimals)).times(token0PriceUSD)
+      .plus(reserve1.div(Math.pow(10, bunniToken.pool.token1.decimals)).times(token1PriceUSD));
+
+    /// calculate the swapAPR
+    let swapAPR = new BigNumber(0);
+
+    if (protocol && block) {
+      const token0Fees = new BigNumber(bunniToken.token0Volume).minus(block.token0Volume).times(bunniToken.pool.fee).div(1e6).times(token0PriceUSD);
+      const token1Fees = new BigNumber(bunniToken.token1Volume).minus(block.token1Volume).times(bunniToken.pool.fee).div(1e6).times(token1PriceUSD);
+      const fees_24h = BigNumber.min(token0Fees, token1Fees);
+      const after_protocol_fee = new BigNumber(1).minus(protocol.protocolFee); 
+      swapAPR = fees_24h.times(365).times(after_protocol_fee).div(reserve).times(100);
+    }
 
     /// calculate the lowerAPR and upperAPR
     let lowerAPR = new BigNumber(0);
@@ -66,10 +88,11 @@ function calculateAPR(bunniToken_address) {
       return;
     }
 
+    console.log(`swapAPR: ${swapAPR.toFixed(2)}%`);
     console.log(`lowerAPR: ${lowerAPR.toFixed(2)}%`);
     console.log(`upperAPR: ${upperAPR.toFixed(2)}%`);
 
-    return [lowerAPR, upperAPR];
+    return [swapAPR, lowerAPR, upperAPR];
   });
 }
 

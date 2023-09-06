@@ -79,6 +79,26 @@ async function getPricePerFullShare(_bunniKey) {
   return [amount0, amount1];
 }
 
+async function getReserves(_bunniKey) {
+  const interface = new ethers.utils.Interface(require('./abis/BunniLens.json'));
+
+  let reserve0 = new BigNumber(0);
+  let reserve1 = new BigNumber(0);
+
+  try {
+    const encodedFunctionData = interface.encodeFunctionData("getReserves", [_bunniKey]);
+    const encodedFunctionResult = await provider.call({ to: lens, data: encodedFunctionData });
+    const decodedFunctionResult = new ethers.utils.AbiCoder().decode(["uint112", "uint112"], encodedFunctionResult);
+
+    reserve0 = new BigNumber(decodedFunctionResult[0]._hex);
+    reserve1 = new BigNumber(decodedFunctionResult[1]._hex);
+  } catch (error) {
+    console.log(error);
+  }
+
+  return [reserve0, reserve1];
+}
+
 async function getGaugeData(_gauge) {
   const ethcallProvider = new Provider(provider);
   await ethcallProvider.init();
@@ -128,4 +148,4 @@ async function getGaugeControllerData(_gauge) {
   return [gauge_exists];
 }
 
-module.exports = { getBunniKey, getPricePerFullShare, getGaugeData, getGaugeControllerData };
+module.exports = { getBunniKey, getPricePerFullShare, getReserves, getGaugeData, getGaugeControllerData };
